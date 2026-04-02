@@ -35,7 +35,7 @@ type Repository interface {
 	RetrieveByIDWithRoles(ctx context.Context, id, memberID string) (Client, error)
 
 	// RetrieveAll retrieves all clients.
-	RetrieveAll(ctx context.Context, pm Page) (ClientsPage, error)
+	RetrieveAll(ctx context.Context, domainID string, pm Page) (ClientsPage, error)
 
 	// RetrieveUserClients retrieve all clients of a given user id.
 	RetrieveUserClients(ctx context.Context, domainID, userID string, pm Page) (ClientsPage, error)
@@ -239,7 +239,6 @@ type Page struct {
 	ID             string    `json:"id,omitempty"`
 	Name           string    `json:"name,omitempty"`
 	Metadata       Metadata  `json:"metadata,omitempty"`
-	Domain         string    `json:"domain,omitempty"`
 	Tags           TagsQuery `json:"tags,omitempty"`
 	Status         Status    `json:"status,omitempty"`
 	Identity       string    `json:"identity,omitempty"`

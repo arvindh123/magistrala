@@ -80,6 +80,8 @@ func (es *eventHandler) Handle(ctx context.Context, event events.Event) error {
 	if !ok {
 		return errNoOperationKey
 	}
+	fmt.Println("Operation ", op, "message: ", msg)
+	fmt.Println("============")
 	switch op {
 	case create:
 		return es.createDomainHandler(ctx, msg)

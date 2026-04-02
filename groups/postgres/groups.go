@@ -367,7 +367,7 @@ func (repo groupRepository) RetrieveByIDWithRoles(ctx context.Context, id, membe
 func (repo groupRepository) RetrieveByIDAndUser(ctx context.Context, domainID, userID, groupID string) (groups.Group, error) {
 	baseQuery := userGroupsBaseQuery
 
-	dbg := dbGroup{ID: groupID, UserID: userID, DomainIDParam: domainID}
+	dbg := dbGroup{ID: groupID, UserID: userID, DomainID: domainID}
 	q := fmt.Sprintf(`%s
 					SELECT
 						g.id,
@@ -415,8 +415,8 @@ func (repo groupRepository) RetrieveByIDAndUser(ctx context.Context, domainID, u
 	return toGroup(dbg)
 }
 
-func (repo groupRepository) RetrieveAll(ctx context.Context, pm groups.PageMeta) (groups.Page, error) {
-	query := buildQuery(pm)
+func (repo groupRepository) RetrieveAll(ctx context.Context, domainID string, pm groups.PageMeta) (groups.Page, error) {
+	query := buildQuery(domainID, pm)
 
 	if pm.RootGroup {
 		query += " AND nlevel(g.path) = 1 "
@@ -441,14 +441,14 @@ func (repo groupRepository) RetrieveAll(ctx context.Context, pm groups.PageMeta)
 		orderClause = fmt.Sprintf("ORDER BY %s %s, g.id %s", orderBy, dir, dir)
 	}
 
-	dbPageMeta, err := toDBGroupPageMeta(pm)
+	params, err := toDBGroupParams(domainID, "", pm)
 	if err != nil {
 		return groups.Page{}, errors.Wrap(repoerr.ErrFailedToRetrieveAllGroups, err)
 	}
 
 	if pm.OnlyTotal {
 		cq := fmt.Sprintf(`SELECT COUNT(*) FROM groups g %s;`, query)
-		total, err := postgres.Total(ctx, repo.db, cq, dbPageMeta)
+		total, err := postgres.Total(ctx, repo.db, cq, params)
 		if err != nil {
 			return groups.Page{}, repo.eh.HandleError(repoerr.ErrFailedToRetrieveAllGroups, err)
 		}
@@ -461,7 +461,7 @@ func (repo groupRepository) RetrieveAll(ctx context.Context, pm groups.PageMeta)
 		g.metadata, g.created_at, g.updated_at, g.updated_by, g.status,
 		COUNT(*) OVER() AS total_count FROM groups g %s %s LIMIT :limit OFFSET :offset;`, query, orderClause)
 
-	rows, err := repo.db.NamedQueryContext(ctx, q, dbPageMeta)
+	rows, err := repo.db.NamedQueryContext(ctx, q, params)
 	if err != nil {
 		return groups.Page{}, repo.eh.HandleError(repoerr.ErrFailedToRetrieveAllGroups, err)
 	}
@@ -484,7 +484,7 @@ func (repo groupRepository) RetrieveAll(ctx context.Context, pm groups.PageMeta)
 
 	if len(items) == 0 {
 		cq := fmt.Sprintf(`SELECT COUNT(*) FROM groups g %s;`, query)
-		total, err = postgres.Total(ctx, repo.db, cq, dbPageMeta)
+		total, err = postgres.Total(ctx, repo.db, cq, params)
 		if err != nil {
 			return groups.Page{}, repo.eh.HandleError(repoerr.ErrFailedToRetrieveAllGroups, err)
 		}
@@ -497,21 +497,21 @@ func (repo groupRepository) RetrieveAll(ctx context.Context, pm groups.PageMeta)
 }
 
 func (repo groupRepository) RetrieveByIDs(ctx context.Context, pm groups.PageMeta, ids ...string) (groups.Page, error) {
-	if (len(ids) == 0) && (pm.DomainID == "") {
+	if len(ids) == 0 {
 		return groups.Page{PageMeta: groups.PageMeta{Offset: pm.Offset, Limit: pm.Limit}}, nil
 	}
-	query := buildQuery(pm, ids...)
+	query := buildQuery("", pm, ids...)
 
 	q := fmt.Sprintf(`SELECT DISTINCT g.id, g.domain_id, tags, COALESCE(g.parent_id, '') AS parent_id, g.name, g.tags, g.description,
 		g.metadata, g.created_at, g.updated_at, g.updated_by, g.status,
 		COUNT(*) OVER() AS total_count FROM groups g %s ORDER BY g.created_at LIMIT :limit OFFSET :offset;`, query)
 
-	dbPageMeta, err := toDBGroupPageMeta(pm)
+	params, err := toDBGroupParams("", "", pm)
 	if err != nil {
 		return groups.Page{}, errors.Wrap(repoerr.ErrFailedToRetrieveAllGroups, err)
 	}
-	dbPageMeta.IDs = pq.StringArray(ids)
-	rows, err := repo.db.NamedQueryContext(ctx, q, dbPageMeta)
+	params.IDs = pq.StringArray(ids)
+	rows, err := repo.db.NamedQueryContext(ctx, q, params)
 	if err != nil {
 		return groups.Page{}, repo.eh.HandleError(repoerr.ErrFailedToRetrieveAllGroups, err)
 	}
@@ -536,7 +536,7 @@ func (repo groupRepository) RetrieveByIDs(ctx context.Context, pm groups.PageMet
 		cq := fmt.Sprintf(`SELECT COUNT(*) FROM (
 			SELECT DISTINCT g.id FROM groups g %s
 		) AS subquery;`, query)
-		total, err = postgres.Total(ctx, repo.db, cq, dbPageMeta)
+		total, err = postgres.Total(ctx, repo.db, cq, params)
 		if err != nil {
 			return groups.Page{}, repo.eh.HandleError(repoerr.ErrFailedToRetrieveAllGroups, err)
 		}
@@ -825,7 +825,7 @@ func (repo groupRepository) RetrieveAllParentGroups(ctx context.Context, domainI
 		return groups.Page{}, err
 	}
 
-	query := buildQuery(pm)
+	query := buildQuery(domainID, pm)
 
 	levelCondition := "g.path @> CAST(:path AS ltree) "
 
@@ -846,7 +846,7 @@ func (repo groupRepository) RetrieveChildrenGroups(ctx context.Context, domainID
 		return groups.Page{}, err
 	}
 
-	query := buildQuery(pm)
+	query := buildQuery(domainID, pm)
 
 	levelCondition := ""
 	switch {
@@ -881,7 +881,7 @@ func (repo groupRepository) RetrieveChildrenGroups(ctx context.Context, domainID
 }
 
 func (repo groupRepository) RetrieveUserGroups(ctx context.Context, domainID, userID string, pm groups.PageMeta) (groups.Page, error) {
-	query := buildQuery(pm)
+	query := buildQuery(domainID, pm)
 	if pm.RootGroup {
 		query += (` AND
 			NOT EXISTS (
@@ -920,12 +920,10 @@ func (repo groupRepository) retrieveGroups(ctx context.Context, domainID, userID
 		orderClause = fmt.Sprintf("ORDER BY %s %s, g.id %s", orderBy, dir, dir)
 	}
 
-	dbPageMeta, err := toDBGroupPageMeta(pm)
+	params, err := toDBGroupParams(domainID, userID, pm)
 	if err != nil {
 		return groups.Page{}, errors.Wrap(repoerr.ErrFailedToRetrieveAllGroups, err)
 	}
-	dbPageMeta.UserID = userID
-	dbPageMeta.DomainIDParam = domainID
 
 	if pm.OnlyTotal {
 		cq := fmt.Sprintf(`%s
@@ -934,7 +932,7 @@ func (repo groupRepository) retrieveGroups(ctx context.Context, domainID, userID
 			%s;
 		`, baseQuery, query)
 
-		total, err := postgres.Total(ctx, repo.db, cq, dbPageMeta)
+		total, err := postgres.Total(ctx, repo.db, cq, params)
 		if err != nil {
 			return groups.Page{}, repo.eh.HandleError(repoerr.ErrFailedToRetrieveAllGroups, err)
 		}
@@ -973,7 +971,7 @@ func (repo groupRepository) retrieveGroups(ctx context.Context, domainID, userID
         LIMIT :limit OFFSET :offset;`,
 		baseQuery, query, orderClause)
 
-	rows, err := repo.db.NamedQueryContext(ctx, q, dbPageMeta)
+	rows, err := repo.db.NamedQueryContext(ctx, q, params)
 	if err != nil {
 		return groups.Page{}, repo.eh.HandleError(repoerr.ErrFailedToRetrieveAllGroups, err)
 	}
@@ -1003,7 +1001,7 @@ func (repo groupRepository) retrieveGroups(ctx context.Context, domainID, userID
 			%s;
 		`, baseQuery, query)
 
-		total, err = postgres.Total(ctx, repo.db, cq, dbPageMeta)
+		total, err = postgres.Total(ctx, repo.db, cq, params)
 		if err != nil {
 			return groups.Page{}, repo.eh.HandleError(repoerr.ErrFailedToRetrieveAllGroups, err)
 		}
@@ -1034,7 +1032,7 @@ JOIN
 	"groups" g ON g.id = gr.entity_id
 WHERE
 	grm.member_id = :user_id
-	AND g.domain_id = :domain_id_param
+	AND g.domain_id = :domain_id
 GROUP BY
 	gr.entity_id, grm.member_id, gr.id, gr."name", g."path", g.id
 ),
@@ -1056,7 +1054,7 @@ direct_groups_with_subgroup AS (
 		"groups" g ON g.id = gr.entity_id
 	WHERE
 		grm.member_id = :user_id
-		AND g.domain_id = :domain_id_param
+		AND g.domain_id = :domain_id
 	GROUP BY
 		gr.entity_id, grm.member_id, gr.id, gr."name", g."path", g.id
 	HAVING
@@ -1086,7 +1084,7 @@ indirect_child_groups AS (
 	JOIN
 		groups indirect_child_groups ON indirect_child_groups.path <@ dlgws.path
 	WHERE
-		indirect_child_groups.domain_id = :domain_id_param
+		indirect_child_groups.domain_id = :domain_id
 		AND NOT EXISTS (
 			SELECT 1
 			FROM direct_groups_with_subgroup dgws
@@ -1200,7 +1198,7 @@ final_groups AS (
 		"groups" dg ON dg.domain_id = d.id
 	WHERE
 		drm.member_id = :user_id
-	 	AND d.id = :domain_id_param
+	 	AND d.id = :domain_id
 	 	AND dra."action" LIKE 'group_%'
 	 	AND NOT EXISTS (
 			SELECT 1 FROM direct_indirect_groups dig
@@ -1211,7 +1209,7 @@ final_groups AS (
 )
 		`
 
-func buildQuery(gm groups.PageMeta, ids ...string) string {
+func buildQuery(domainID string, gm groups.PageMeta, ids ...string) string {
 	queries := []string{}
 
 	if len(ids) > 0 {
@@ -1234,7 +1232,7 @@ func buildQuery(gm groups.PageMeta, ids ...string) string {
 			queries = append(queries, "tags && :tags")
 		}
 	}
-	if gm.DomainID != "" {
+	if domainID != "" {
 		queries = append(queries, "g.domain_id = :domain_id")
 	}
 	if gm.AccessType != "" {
@@ -1291,7 +1289,6 @@ type dbGroup struct {
 	Roles                     json.RawMessage  `db:"roles,omitempty"`
 	TotalCount                uint64           `db:"total_count"`
 	UserID                    string           `db:"user_id,omitempty"`
-	DomainIDParam             string           `db:"domain_id_param,omitempty"`
 }
 
 func toDBGroup(g groups.Group) (dbGroup, error) {
@@ -1392,20 +1389,20 @@ func toGroup(g dbGroup) (groups.Group, error) {
 	}, nil
 }
 
-func toDBGroupPageMeta(pm groups.PageMeta) (dbGroupPageMeta, error) {
+func toDBGroupParams(domainID, userID string, pm groups.PageMeta) (dbGroupParams, error) {
 	data := []byte("{}")
 	if len(pm.Metadata) > 0 {
 		b, err := json.Marshal(pm.Metadata)
 		if err != nil {
-			return dbGroupPageMeta{}, errors.Wrap(errors.ErrMalformedEntity, err)
+			return dbGroupParams{}, errors.Wrap(errors.ErrMalformedEntity, err)
 		}
 		data = b
 	}
 	var tags pgtype.TextArray
 	if err := tags.Set(pm.Tags.Elements); err != nil {
-		return dbGroupPageMeta{}, errors.Wrap(repoerr.ErrViewEntity, err)
+		return dbGroupParams{}, errors.Wrap(repoerr.ErrViewEntity, err)
 	}
-	return dbGroupPageMeta{
+	return dbGroupParams{
 		ID:          pm.ID,
 		Name:        pm.Name,
 		Metadata:    data,
@@ -1413,7 +1410,7 @@ func toDBGroupPageMeta(pm groups.PageMeta) (dbGroupPageMeta, error) {
 		Total:       pm.Total,
 		Offset:      pm.Offset,
 		Limit:       pm.Limit,
-		DomainID:    pm.DomainID,
+		DomainID:    domainID,
 		Status:      pm.Status,
 		RoleName:    pm.RoleName,
 		RoleID:      pm.RoleID,
@@ -1422,10 +1419,11 @@ func toDBGroupPageMeta(pm groups.PageMeta) (dbGroupPageMeta, error) {
 		Path:        pm.Path,
 		CreatedFrom: pm.CreatedFrom,
 		CreatedTo:   pm.CreatedTo,
+		UserID:      userID,
 	}, nil
 }
 
-type dbGroupPageMeta struct {
+type dbGroupParams struct {
 	ID            string           `db:"id"`
 	Name          string           `db:"name"`
 	ParentID      string           `db:"parent_id"`
@@ -1447,7 +1445,6 @@ type dbGroupPageMeta struct {
 	CreatedFrom   time.Time        `db:"created_from"`
 	CreatedTo     time.Time        `db:"created_to"`
 	UserID        string           `db:"user_id"`
-	DomainIDParam string           `db:"domain_id_param"`
 }
 
 func (repo groupRepository) processRows(rows *sqlx.Rows) ([]groups.Group, error) {

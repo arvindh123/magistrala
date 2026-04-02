@@ -88,7 +88,6 @@ type Page struct {
 	ID             string                 `json:"id,omitempty"`
 	Name           string                 `json:"name,omitempty"`
 	Metadata       Metadata               `json:"metadata,omitempty"`
-	Domain         string                 `json:"domain,omitempty"`
 	Tags           TagsQuery              `json:"tags,omitempty"`
 	Status         Status                 `json:"status,omitempty"`
 	Group          nullable.Value[string] `json:"group,omitempty"`
@@ -193,7 +192,7 @@ type Repository interface {
 	RetrieveByIDWithRoles(ctx context.Context, id, memberID string) (Channel, error)
 
 	// RetrieveAll retrieves the subset of channels.
-	RetrieveAll(ctx context.Context, pm Page) (ChannelsPage, error)
+	RetrieveAll(ctx context.Context, domainID string, pm Page) (ChannelsPage, error)
 
 	// Remove removes the channel having the provided identifier
 	Remove(ctx context.Context, ids ...string) error

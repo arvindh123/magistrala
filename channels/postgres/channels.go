@@ -376,8 +376,8 @@ func (cr *channelRepository) RetrieveByIDWithRoles(ctx context.Context, id, memb
 	return toChannel(dbch)
 }
 
-func (cr *channelRepository) RetrieveAll(ctx context.Context, pm channels.Page) (channels.ChannelsPage, error) {
-	pageQuery, err := PageQuery(pm)
+func (cr *channelRepository) RetrieveAll(ctx context.Context, domainID string, pm channels.Page) (channels.ChannelsPage, error) {
+	pageQuery, err := PageQuery(domainID, pm)
 	if err != nil {
 		return channels.ChannelsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
 	}
@@ -435,14 +435,14 @@ func (cr *channelRepository) RetrieveAll(ctx context.Context, pm channels.Page) 
 
 	q = applyLimitOffset(q)
 
-	dbPage, err := toDBChannelsPage(pm)
+	params, err := toDBChannelsParams(domainID, "", pm)
 	if err != nil {
 		return channels.ChannelsPage{}, errors.Wrap(repoerr.ErrFailedToRetrieveAllGroups, err)
 	}
 
 	var items []channels.Channel
 	if !pm.OnlyTotal {
-		rows, err := cr.db.NamedQueryContext(ctx, q, dbPage)
+		rows, err := cr.db.NamedQueryContext(ctx, q, params)
 		if err != nil {
 			return channels.ChannelsPage{}, cr.eh.HandleError(repoerr.ErrFailedToRetrieveAllGroups, err)
 		}
@@ -468,7 +468,7 @@ func (cr *channelRepository) RetrieveAll(ctx context.Context, pm channels.Page) 
 			) AS sub_query;
 			`, comQuery)
 
-	total, err := postgres.Total(ctx, cr.db, cq, dbPage)
+	total, err := postgres.Total(ctx, cr.db, cq, params)
 	if err != nil {
 		return channels.ChannelsPage{}, cr.eh.HandleError(repoerr.ErrViewEntity, err)
 	}
@@ -489,7 +489,7 @@ func (repo *channelRepository) RetrieveUserChannels(ctx context.Context, domainI
 }
 
 func (repo *channelRepository) retrieveChannels(ctx context.Context, domainID, userID string, pm channels.Page) (channels.ChannelsPage, error) {
-	pageQuery, err := PageQuery(pm)
+	pageQuery, err := PageQuery(domainID, pm)
 	if err != nil {
 		return channels.ChannelsPage{}, err
 	}
@@ -522,12 +522,10 @@ func (repo *channelRepository) retrieveChannels(ctx context.Context, domainID, u
 			` + connCountJoinQuery
 	}
 
-	dbPage, err := toDBChannelsPage(pm)
+	params, err := toDBChannelsParams(domainID, userID, pm)
 	if err != nil {
 		return channels.ChannelsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
 	}
-	dbPage.UserID = userID
-	dbPage.DomainID = domainID
 
 	if pm.OnlyTotal {
 		cq := fmt.Sprintf(`%s
@@ -536,7 +534,7 @@ func (repo *channelRepository) retrieveChannels(ctx context.Context, domainID, u
 			%s;
 		`, bq, connCountJoinQuery, pageQuery)
 
-		total, err := postgres.Total(ctx, repo.db, cq, dbPage)
+		total, err := postgres.Total(ctx, repo.db, cq, params)
 		if err != nil {
 			return channels.ChannelsPage{}, repo.eh.HandleError(repoerr.ErrViewEntity, err)
 		}
@@ -583,7 +581,9 @@ func (repo *channelRepository) retrieveChannels(ctx context.Context, domainID, u
 
 	q = applyLimitOffset(q)
 
-	rows, err := repo.db.NamedQueryContext(ctx, q, dbPage)
+	fmt.Println(q)
+	fmt.Println(params)
+	rows, err := repo.db.NamedQueryContext(ctx, q, params)
 	if err != nil {
 		return channels.ChannelsPage{}, repo.eh.HandleError(repoerr.ErrViewEntity, err)
 	}
@@ -614,7 +614,7 @@ func (repo *channelRepository) retrieveChannels(ctx context.Context, domainID, u
 			%s;
 		`, bq, connCountJoinQuery, pageQuery)
 
-		total, err = postgres.Total(ctx, repo.db, cq, dbPage)
+		total, err = postgres.Total(ctx, repo.db, cq, params)
 		if err != nil {
 			return channels.ChannelsPage{}, repo.eh.HandleError(repoerr.ErrViewEntity, err)
 		}
@@ -666,7 +666,7 @@ WITH direct_channels AS (
 		groups pg ON pg.id = c.parent_group_id
 	WHERE
 		crm.member_id = :user_id
-		AND c.domain_id = :domain_id_param
+		AND c.domain_id = :domain_id
 	GROUP BY
 		cr.entity_id, crm.member_id, cr.id, cr."name", c.id, pg.path
 ),
@@ -690,7 +690,7 @@ direct_groups AS (
 		groups_role_actions all_actions ON all_actions.role_id = grm.role_id
 	WHERE
 		grm.member_id = :user_id
-		AND g.domain_id = :domain_id_param
+		AND g.domain_id = :domain_id
 		AND gra."action" LIKE 'channel%'
 	GROUP BY
 		gr.entity_id, grm.member_id, gr.id, gr."name", g."path", g.id
@@ -715,7 +715,7 @@ direct_groups_with_subgroup AS (
 		groups_role_actions all_actions ON all_actions.role_id = grm.role_id
 	WHERE
 		grm.member_id = :user_id
-		AND g.domain_id = :domain_id_param
+		AND g.domain_id = :domain_id
 		AND gra."action" LIKE 'subgroup_channel%'
 	GROUP BY
 		gr.entity_id, grm.member_id, gr.id, gr."name", g."path", g.id
@@ -744,7 +744,7 @@ indirect_child_groups AS (
 	JOIN
 		groups indirect_child_groups ON indirect_child_groups.path <@ dlgws.path
 	WHERE
-		indirect_child_groups.domain_id = :domain_id_param
+		indirect_child_groups.domain_id = :domain_id
 		AND NOT EXISTS (
 			SELECT 1
 			FROM direct_groups_with_subgroup dgws
@@ -892,7 +892,7 @@ final_channels AS (
 		groups g ON dc.parent_group_id = g.id
 	WHERE
 		drm.member_id = :user_id
-	 	AND d.id = :domain_id_param
+	 	AND d.id = :domain_id
 	 	AND dra."action" LIKE 'channel_%'
 	 	AND NOT EXISTS (
 			SELECT 1 FROM groups_channels gc
@@ -1282,7 +1282,7 @@ func toChannel(ch dbChannel) (channels.Channel, error) {
 	return newCh, nil
 }
 
-func PageQuery(pm channels.Page) (string, error) {
+func PageQuery(domainID string, pm channels.Page) (string, error) {
 	mq, _, err := postgres.CreateMetadataQuery("", pm.Metadata)
 	if err != nil {
 		return "", errors.Wrap(errors.ErrMalformedEntity, err)
@@ -1315,7 +1315,7 @@ func PageQuery(pm channels.Page) (string, error) {
 	if pm.Status != channels.AllStatus {
 		query = append(query, "c.status = :status")
 	}
-	if pm.Domain != "" {
+	if domainID != "" {
 		query = append(query, "c.domain_id = :domain_id")
 	}
 	if pm.Group.Valid {
@@ -1387,31 +1387,31 @@ func applyLimitOffset(query string) string {
 			LIMIT :limit OFFSET :offset`, query)
 }
 
-func toDBChannelsPage(pm channels.Page) (dbChannelsPage, error) {
+func toDBChannelsParams(domainID, userID string, pm channels.Page) (dbChannelsParams, error) {
 	_, data, err := postgres.CreateMetadataQuery("", pm.Metadata)
 	if err != nil {
-		return dbChannelsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
+		return dbChannelsParams{}, errors.Wrap(repoerr.ErrViewEntity, err)
 	}
 	var tags pgtype.TextArray
 	if err := tags.Set(pm.Tags.Elements); err != nil {
-		return dbChannelsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
+		return dbChannelsParams{}, errors.Wrap(repoerr.ErrViewEntity, err)
 	}
 
 	var connType uint8
 	if pm.ConnectionType != "" {
 		ct, err := connections.ParseConnType(pm.ConnectionType)
 		if err != nil {
-			return dbChannelsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
+			return dbChannelsParams{}, errors.Wrap(repoerr.ErrViewEntity, err)
 		}
 		connType = uint8(ct)
 	}
 
-	return dbChannelsPage{
+	return dbChannelsParams{
 		Limit:       pm.Limit,
 		Offset:      pm.Offset,
 		Name:        pm.Name,
 		Id:          pm.ID,
-		Domain:      pm.Domain,
+		Domain:      domainID,
 		Metadata:    data,
 		Tags:        tags,
 		Status:      pm.Status,
@@ -1425,10 +1425,11 @@ func toDBChannelsPage(pm channels.Page) (dbChannelsPage, error) {
 		IDs:         pq.StringArray(pm.IDs),
 		CreatedFrom: pm.CreatedFrom,
 		CreatedTo:   pm.CreatedTo,
+		UserID:      userID,
 	}, nil
 }
 
-type dbChannelsPage struct {
+type dbChannelsParams struct {
 	Limit       uint64           `db:"limit"`
 	Offset      uint64           `db:"offset"`
 	Name        string           `db:"name"`
@@ -1448,7 +1449,6 @@ type dbChannelsPage struct {
 	CreatedTo   time.Time        `db:"created_to"`
 	IDs         pq.StringArray   `db:"ids"`
 	UserID      string           `db:"user_id"`
-	DomainID    string           `db:"domain_id_param"`
 }
 
 type dbConnection struct {

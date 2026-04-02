@@ -104,7 +104,7 @@ type Repository interface {
 	RetrieveByIDWithRoles(ctx context.Context, groupID, memberID string) (Group, error)
 
 	// RetrieveAll retrieves all groups.
-	RetrieveAll(ctx context.Context, pm PageMeta) (Page, error)
+	RetrieveAll(ctx context.Context, domainID string, pm PageMeta) (Page, error)
 
 	// RetrieveByIDs retrieves group by ids and query.
 	RetrieveByIDs(ctx context.Context, pm PageMeta, ids ...string) (Page, error)

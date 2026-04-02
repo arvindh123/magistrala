@@ -414,8 +414,8 @@ func (repo *clientRepo) RetrieveByID(ctx context.Context, id string) (clients.Cl
 	return clients.Client{}, repoerr.ErrNotFound
 }
 
-func (repo *clientRepo) RetrieveAll(ctx context.Context, pm clients.Page) (clients.ClientsPage, error) {
-	pageQuery, err := PageQuery(pm)
+func (repo *clientRepo) RetrieveAll(ctx context.Context, domainID string, pm clients.Page) (clients.ClientsPage, error) {
+	pageQuery, err := PageQuery(domainID, pm)
 	if err != nil {
 		return clients.ClientsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
 	}
@@ -472,13 +472,13 @@ func (repo *clientRepo) RetrieveAll(ctx context.Context, pm clients.Page) (clien
 
 	q = applyLimitOffset(q)
 
-	dbPage, err := ToDBClientsPage(pm)
+	params, err := ToDBClientsParams(domainID, "", pm)
 	if err != nil {
 		return clients.ClientsPage{}, errors.Wrap(repoerr.ErrFailedToRetrieveAllGroups, err)
 	}
 	var items []clients.Client
 	if !pm.OnlyTotal {
-		rows, err := repo.DB.NamedQueryContext(ctx, q, dbPage)
+		rows, err := repo.DB.NamedQueryContext(ctx, q, params)
 		if err != nil {
 			return clients.ClientsPage{}, repo.eh.HandleError(repoerr.ErrFailedToRetrieveAllGroups, err)
 		}
@@ -504,7 +504,7 @@ func (repo *clientRepo) RetrieveAll(ctx context.Context, pm clients.Page) (clien
 			) AS sub_query;
 			`, comQuery)
 
-	total, err := postgres.Total(ctx, repo.DB, cq, dbPage)
+	total, err := postgres.Total(ctx, repo.DB, cq, params)
 	if err != nil {
 		return clients.ClientsPage{}, repo.eh.HandleError(repoerr.ErrViewEntity, err)
 	}
@@ -526,7 +526,7 @@ func (repo *clientRepo) RetrieveUserClients(ctx context.Context, domainID, userI
 }
 
 func (repo *clientRepo) retrieveClients(ctx context.Context, domainID, userID string, pm clients.Page) (clients.ClientsPage, error) {
-	pageQuery, err := PageQuery(pm)
+	pageQuery, err := PageQuery(domainID, pm)
 	if err != nil {
 		return clients.ClientsPage{}, err
 	}
@@ -559,12 +559,10 @@ func (repo *clientRepo) retrieveClients(ctx context.Context, domainID, userID st
 			,conn.connection_types` + connCountJoinQuery
 	}
 
-	dbPage, err := ToDBClientsPage(pm)
+	params, err := ToDBClientsParams(domainID, userID, pm)
 	if err != nil {
 		return clients.ClientsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
 	}
-	dbPage.UserID = userID
-	dbPage.DomainID = domainID
 
 	if pm.OnlyTotal {
 		cq := fmt.Sprintf(`%s
@@ -573,7 +571,7 @@ func (repo *clientRepo) retrieveClients(ctx context.Context, domainID, userID st
 			%s;
 		`, bq, connCountJoinQuery, pageQuery)
 
-		total, err := postgres.Total(ctx, repo.DB, cq, dbPage)
+		total, err := postgres.Total(ctx, repo.DB, cq, params)
 		if err != nil {
 			return clients.ClientsPage{}, repo.eh.HandleError(repoerr.ErrViewEntity, err)
 		}
@@ -620,7 +618,7 @@ func (repo *clientRepo) retrieveClients(ctx context.Context, domainID, userID st
 
 	q = applyLimitOffset(q)
 
-	rows, err := repo.DB.NamedQueryContext(ctx, q, dbPage)
+	rows, err := repo.DB.NamedQueryContext(ctx, q, params)
 	if err != nil {
 		return clients.ClientsPage{}, repo.eh.HandleError(repoerr.ErrViewEntity, err)
 	}
@@ -651,7 +649,7 @@ func (repo *clientRepo) retrieveClients(ctx context.Context, domainID, userID st
 			%s;
 		`, bq, connCountJoinQuery, pageQuery)
 
-		total, err = postgres.Total(ctx, repo.DB, cq, dbPage)
+		total, err = postgres.Total(ctx, repo.DB, cq, params)
 		if err != nil {
 			return clients.ClientsPage{}, repo.eh.HandleError(repoerr.ErrViewEntity, err)
 		}
@@ -703,7 +701,7 @@ const userClientBaseQuery = `
 			groups pg ON pg.id = c.parent_group_id
 		WHERE
 			crm.member_id = :user_id
-			AND c.domain_id = :domain_id_param
+			AND c.domain_id = :domain_id
 		GROUP BY
 			cr.entity_id, crm.member_id, cr.id, cr."name", c.id, pg.path
 	),
@@ -727,7 +725,7 @@ const userClientBaseQuery = `
 			groups_role_actions all_actions ON all_actions.role_id = grm.role_id
 		WHERE
 			grm.member_id = :user_id
-			AND g.domain_id = :domain_id_param
+			AND g.domain_id = :domain_id
 			AND gra."action" LIKE 'client%'
 		GROUP BY
 			gr.entity_id, grm.member_id, gr.id, gr."name", g."path", g.id
@@ -752,7 +750,7 @@ const userClientBaseQuery = `
 			groups_role_actions all_actions ON all_actions.role_id = grm.role_id
 		WHERE
 			grm.member_id = :user_id
-			AND g.domain_id = :domain_id_param
+			AND g.domain_id = :domain_id
 			AND gra."action" LIKE 'subgroup_client%'
 		GROUP BY
 			gr.entity_id, grm.member_id, gr.id, gr."name", g."path", g.id
@@ -781,7 +779,7 @@ const userClientBaseQuery = `
 		JOIN
 			groups indirect_child_groups ON indirect_child_groups.path <@ dlgws.path
 		WHERE
-			indirect_child_groups.domain_id = :domain_id_param
+			indirect_child_groups.domain_id = :domain_id
 			AND NOT EXISTS (
 			SELECT 1
 			FROM direct_groups_with_subgroup dgws
@@ -929,7 +927,7 @@ const userClientBaseQuery = `
 			groups g ON dc.parent_group_id = g.id
 		WHERE
 			drm.member_id = :user_id
-			 AND d.id = :domain_id_param
+			 AND d.id = :domain_id
 			 AND dra."action" LIKE 'client_%'
 			 AND NOT EXISTS (
 				SELECT 1 FROM groups_clients gc
@@ -941,7 +939,7 @@ const userClientBaseQuery = `
 	`
 
 func (repo *clientRepo) SearchClients(ctx context.Context, pm clients.Page) (clients.ClientsPage, error) {
-	query, err := PageQuery(pm)
+	query, err := PageQuery("", pm)
 	if err != nil {
 		return clients.ClientsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
 	}
@@ -951,12 +949,12 @@ func (repo *clientRepo) SearchClients(ctx context.Context, pm clients.Page) (cli
 
 	q := fmt.Sprintf(`SELECT c.id, c.name, c.metadata, c.created_at, c.updated_at FROM clients c %s LIMIT :limit OFFSET :offset;`, query)
 
-	dbPage, err := ToDBClientsPage(pm)
+	params, err := ToDBClientsParams("", "", pm)
 	if err != nil {
 		return clients.ClientsPage{}, errors.Wrap(repoerr.ErrFailedToRetrieveAllGroups, err)
 	}
 
-	rows, err := repo.DB.NamedQueryContext(ctx, q, dbPage)
+	rows, err := repo.DB.NamedQueryContext(ctx, q, params)
 	if err != nil {
 		return clients.ClientsPage{}, repo.eh.HandleError(repoerr.ErrFailedToRetrieveAllGroups, err)
 	}
@@ -978,7 +976,7 @@ func (repo *clientRepo) SearchClients(ctx context.Context, pm clients.Page) (cli
 	}
 
 	cq := fmt.Sprintf(`SELECT COUNT(*) FROM clients c %s;`, tq)
-	total, err := postgres.Total(ctx, repo.DB, cq, dbPage)
+	total, err := postgres.Total(ctx, repo.DB, cq, params)
 	if err != nil {
 		return clients.ClientsPage{}, repo.eh.HandleError(repoerr.ErrViewEntity, err)
 	}
@@ -1187,23 +1185,23 @@ func ToClient(t DBClient) (clients.Client, error) {
 	return cli, nil
 }
 
-func ToDBClientsPage(pm clients.Page) (dbClientsPage, error) {
+func ToDBClientsParams(domainID, userID string, pm clients.Page) (dbClientsParams, error) {
 	_, data, err := postgres.CreateMetadataQuery("", pm.Metadata)
 	if err != nil {
-		return dbClientsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
+		return dbClientsParams{}, errors.Wrap(repoerr.ErrViewEntity, err)
 	}
 	var tags pgtype.TextArray
 	if err := tags.Set(pm.Tags.Elements); err != nil {
-		return dbClientsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
+		return dbClientsParams{}, errors.Wrap(repoerr.ErrViewEntity, err)
 	}
-	return dbClientsPage{
+	return dbClientsParams{
 		Offset:      pm.Offset,
 		Limit:       pm.Limit,
 		Name:        pm.Name,
 		Identity:    pm.Identity,
 		Id:          pm.ID,
 		Metadata:    data,
-		Domain:      pm.Domain,
+		Domain:      domainID,
 		Status:      pm.Status,
 		Tags:        tags,
 		GroupID:     pm.Group,
@@ -1216,10 +1214,11 @@ func ToDBClientsPage(pm clients.Page) (dbClientsPage, error) {
 		IDs:         pq.StringArray(pm.IDs),
 		CreatedFrom: pm.CreatedFrom,
 		CreatedTo:   pm.CreatedTo,
+		UserID:      userID,
 	}, nil
 }
 
-type dbClientsPage struct {
+type dbClientsParams struct {
 	Limit       uint64           `db:"limit"`
 	Offset      uint64           `db:"offset"`
 	Name        string           `db:"name"`
@@ -1240,10 +1239,9 @@ type dbClientsPage struct {
 	CreatedTo   time.Time        `db:"created_to"`
 	IDs         pq.StringArray   `db:"ids"`
 	UserID      string           `db:"user_id"`
-	DomainID    string           `db:"domain_id_param"`
 }
 
-func PageQuery(pm clients.Page) (string, error) {
+func PageQuery(domainID string, pm clients.Page) (string, error) {
 	var query []string
 	if pm.Name != "" {
 		query = append(query, "c.name ILIKE '%' || :name || '%'")
@@ -1269,7 +1267,7 @@ func PageQuery(pm clients.Page) (string, error) {
 	if pm.Status != clients.AllStatus {
 		query = append(query, "c.status = :status")
 	}
-	if pm.Domain != "" {
+	if domainID != "" {
 		query = append(query, "c.domain_id = :domain_id")
 	}
 
@@ -1368,7 +1366,7 @@ func (repo *clientRepo) RetrieveByIds(ctx context.Context, ids []string) (client
 	}
 
 	pm := clients.Page{IDs: ids}
-	query, err := PageQuery(pm)
+	query, err := PageQuery("", pm)
 	if err != nil {
 		return clients.ClientsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
 	}
@@ -1376,11 +1374,11 @@ func (repo *clientRepo) RetrieveByIds(ctx context.Context, ids []string) (client
 	q := fmt.Sprintf(`SELECT c.id, c.name, c.tags, c.identity, c.metadata, COALESCE(c.domain_id, '') AS domain_id,  COALESCE(parent_group_id, '') AS parent_group_id, c.status,
 					c.created_at, c.updated_at, COALESCE(c.updated_by, '') AS updated_by FROM clients c %s ORDER BY c.created_at`, query)
 
-	dbPage, err := ToDBClientsPage(pm)
+	params, err := ToDBClientsParams("", "", pm)
 	if err != nil {
 		return clients.ClientsPage{}, errors.Wrap(repoerr.ErrFailedToRetrieveAllGroups, err)
 	}
-	rows, err := repo.DB.NamedQueryContext(ctx, q, dbPage)
+	rows, err := repo.DB.NamedQueryContext(ctx, q, params)
 	if err != nil {
 		return clients.ClientsPage{}, errors.Wrap(repoerr.ErrFailedToRetrieveAllGroups, err)
 	}
@@ -1402,7 +1400,7 @@ func (repo *clientRepo) RetrieveByIds(ctx context.Context, ids []string) (client
 	}
 	cq := fmt.Sprintf(`SELECT COUNT(*) FROM clients c %s;`, query)
 
-	total, err := postgres.Total(ctx, repo.DB, cq, dbPage)
+	total, err := postgres.Total(ctx, repo.DB, cq, params)
 	if err != nil {
 		return clients.ClientsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
 	}

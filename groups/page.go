@@ -50,7 +50,6 @@ type PageMeta struct {
 	Dir         string    `json:"dir,omitempty"`
 	Order       string    `json:"order,omitempty"`
 	Path        string    `json:"path,omitempty"`
-	DomainID    string    `json:"domain_id,omitempty"`
 	Tags        TagsQuery `json:"tags,omitempty"`
 	Metadata    Metadata  `json:"metadata,omitempty"`
 	Status      Status    `json:"status,omitempty"`

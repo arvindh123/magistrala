@@ -267,9 +267,6 @@ func (luce listUserChannelsEvent) Encode() (map[string]any, error) {
 	if luce.Metadata != nil {
 		val["metadata"] = luce.Metadata
 	}
-	if luce.Domain != "" {
-		val["domain"] = luce.Domain
-	}
 	if len(luce.Tags.Elements) > 0 {
 		val["tag"] = luce.Tags.Elements
 	}

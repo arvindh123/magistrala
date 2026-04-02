@@ -196,8 +196,7 @@ func (svc service) ViewChannel(ctx context.Context, session authn.Session, id st
 func (svc service) ListChannels(ctx context.Context, session authn.Session, pm Page) (ChannelsPage, error) {
 	switch session.SuperAdmin {
 	case true:
-		pm.Domain = session.DomainID
-		cp, err := svc.repo.RetrieveAll(ctx, pm)
+		cp, err := svc.repo.RetrieveAll(ctx, session.DomainID, pm)
 		if err != nil {
 			return ChannelsPage{}, errors.Wrap(svcerr.ErrViewEntity, err)
 		}

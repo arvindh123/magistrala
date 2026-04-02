@@ -141,8 +141,7 @@ func (svc service) View(ctx context.Context, session authn.Session, id string, w
 func (svc service) ListClients(ctx context.Context, session authn.Session, pm Page) (ClientsPage, error) {
 	switch session.SuperAdmin {
 	case true:
-		pm.Domain = session.DomainID
-		cp, err := svc.repo.RetrieveAll(ctx, pm)
+		cp, err := svc.repo.RetrieveAll(ctx, session.DomainID, pm)
 		if err != nil {
 			return ClientsPage{}, errors.Wrap(svcerr.ErrViewEntity, err)
 		}

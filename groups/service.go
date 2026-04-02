@@ -129,8 +129,7 @@ func (svc service) ViewGroup(ctx context.Context, session smqauthn.Session, id s
 func (svc service) ListGroups(ctx context.Context, session smqauthn.Session, gm PageMeta) (Page, error) {
 	switch session.SuperAdmin {
 	case true:
-		gm.DomainID = session.DomainID
-		page, err := svc.repo.RetrieveAll(ctx, gm)
+		page, err := svc.repo.RetrieveAll(ctx, session.DomainID, gm)
 		if err != nil {
 			return Page{}, errors.Wrap(svcerr.ErrViewEntity, err)
 		}
